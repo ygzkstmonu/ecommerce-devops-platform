@@ -1,0 +1,3 @@
+# ecommerce-devops-platform
+
+Proje devam ediyor...
