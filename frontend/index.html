@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Commerce Platform</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        .status {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .products {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .product-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        .product-card:hover {
+            transform: translateY(-5px);
+        }
+        .product-name {
+            font-size: 1.2em;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .product-price {
+            font-size: 1.5em;
+            color: #764ba2;
+            font-weight: bold;
+        }
+        .loading { text-align: center; color: white; font-size: 1.2em; }
+        .error { color: #ff4444; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛒 E-Commerce Platform</h1>
+        
+        <div class="status" id="status">
+            <h2>Backend Status: <span id="backend-status">Checking...</span></h2>
+        </div>
+
+        <div id="products-container">
+            <p class="loading">Loading products...</p>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+
+        // Check backend health
+        async function checkBackendHealth() {
+            try {
+                const response = await fetch(`${API_URL}/api/health`);
+                const data = await response.json();
+                document.getElementById('backend-status').textContent = 
+                    `✅ ${data.status.toUpperCase()} - ${data.service}`;
+                document.getElementById('backend-status').style.color = '#22c55e';
+            } catch (error) {
+                document.getElementById('backend-status').textContent = '❌ OFFLINE';
+                document.getElementById('backend-status').style.color = '#ff4444';
+            }
+        }
+
+        // Load products
+        async function loadProducts() {
+            try {
+                const response = await fetch(`${API_URL}/api/products`);
+                const products = await response.json();
+                
+                const container = document.getElementById('products-container');
+                container.innerHTML = '<div class="products"></div>';
+                const productsGrid = container.querySelector('.products');
+                
+                products.forEach(product => {
+                    const card = document.createElement('div');
+                    card.className = 'product-card';
+                    card.innerHTML = `
+                        <div class="product-name">${product.name}</div>
+                        <div class="product-price">$${product.price}</div>
+                    `;
+                    productsGrid.appendChild(card);
+                });
+            } catch (error) {
+                document.getElementById('products-container').innerHTML = 
+                    '<p class="error">Failed to load products</p>';
+            }
+        }
+
+        // Initialize
+        checkBackendHealth();
+        loadProducts();
+        setInterval(checkBackendHealth, 10000); // Check every 10 seconds
+    </script>
+</body>
+</html>
