@@ -1,0 +1,2 @@
+# Monitoring
+Prometheus + Grafana configuration
