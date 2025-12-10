@@ -9,8 +9,8 @@ Proje devam ediyor...
 - Bash scripting
 - SSH authentication
 
-### Week 2-3: Docker & Containerization
+### Docker & Containerization
 - Coming soon...
 
-### Week 4-5: CI/CD Pipeline
+### CI/CD Pipeline
 - Coming soon...
