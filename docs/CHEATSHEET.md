@@ -942,3 +942,529 @@ docker compose ps
 ✅ **Access Mode:** Grafana'da `proxy` kullan (güvenli, browser'dan direkt değil)
 ✅ **Scrape Interval:** Production'da 15-30s (balance: freshness vs performance)
 ✅ **Environment Variables:** Secrets'ı env'den çek, kodda bırakma
+
+---
+
+## ☸️ Kubernetes (K8s) - Container Orchestration
+
+### Docker Compose vs Kubernetes
+
+**Docker Compose:**
+- Development için ideal
+- Tek sunucuda çalışır
+- Basit YAML konfigürasyonu
+- Manuel scaling
+
+**Kubernetes:**
+- Production için tasarlandı
+- Cluster (birden fazla sunucu) yönetir
+- Auto-scaling, self-healing
+- High availability
+
+### Kubernetes Temel Kavramları
+
+**Cluster:**
+- Master Node(s): Control plane (API server, scheduler, controller)
+- Worker Node(s): Container'ların çalıştığı sunucular
+
+**Pod:**
+- En küçük deployable unit
+- 1 veya daha fazla container içerir
+- Shared network ve storage
+- Ephemeral (geçici) - ölürse yenisi oluşturulur
+
+```yaml
+# Pod örneği (genellikle direkt kullanılmaz)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-pod
+spec:
+  containers:
+  - name: backend
+    image: ecommerce-backend:latest
+    ports:
+    - containerPort: 5000
+```
+
+**Deployment:**
+- Pod'ların lifecycle'ını yönetir
+- Replica count (kaç pod olacak)
+- Rolling updates / Rollbacks
+- Self-healing (pod ölürse yenisini başlatır)
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: ecommerce
+spec:
+  replicas: 2                    # 2 pod çalışsın
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: ecommerce-backend:latest
+        ports:
+        - containerPort: 5000
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: ecommerce-config
+              key: DB_HOST
+        resources:
+          requests:              # Minimum kaynak
+            memory: "128Mi"
+            cpu: "100m"
+          limits:                # Maximum kaynak
+            memory: "256Mi"
+            cpu: "200m"
+```
+
+**Service:**
+- Pod'lara network erişimi sağlar
+- Load balancing (replica'lar arası dağıtım)
+- DNS (service adı ile erişim)
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: ecommerce
+spec:
+  type: ClusterIP              # İçerden erişim
+  ports:
+  - port: 5000                 # Service portu
+    targetPort: 5000           # Container portu
+  selector:
+    app: backend               # Hangi pod'lara yönlendir
+```
+
+**Service Types:**
+- **ClusterIP**: Cluster içinden erişim (default)
+- **NodePort**: Node IP'si üzerinden dışarıdan erişim
+- **LoadBalancer**: Cloud provider'ın LB'sini kullan
+- **ExternalName**: DNS CNAME mapping
+
+### ConfigMap & Secret
+
+**ConfigMap:** Non-sensitive configuration
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce
+data:
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  NODE_ENV: "production"
+```
+
+**Secret:** Sensitive data (base64 encoded)
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ecommerce-secrets
+  namespace: ecommerce
+type: Opaque
+stringData:                    # stringData: otomatik encode eder
+  DB_USER: "devops"
+  DB_PASSWORD: "devops123"
+```
+
+**Container'da Kullanım:**
+
+```yaml
+env:
+  # ConfigMap'ten değer
+  - name: DB_HOST
+    valueFrom:
+      configMapKeyRef:
+        name: ecommerce-config
+        key: DB_HOST
+
+  # Secret'tan değer
+  - name: DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: ecommerce-secrets
+        key: DB_PASSWORD
+```
+
+### PersistentVolume (PV) & PersistentVolumeClaim (PVC)
+
+**Neden Gerekli?**
+- Pod'lar ephemeral (geçici)
+- Pod ölürse, içindeki data kaybolur
+- Database gibi stateful uygulamalar için persistent storage gerekli
+
+```yaml
+# PVC (Developer talep eder)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: ecommerce
+spec:
+  accessModes:
+    - ReadWriteOnce          # Tek pod okuyup yazabilir
+  resources:
+    requests:
+      storage: 5Gi           # 5GB storage istiyorum
+  storageClassName: standard # Hangi storage sınıfı
+```
+
+**Pod'da Kullanım:**
+
+```yaml
+volumes:
+  - name: postgres-storage
+    persistentVolumeClaim:
+      claimName: postgres-pvc
+
+volumeMounts:
+  - name: postgres-storage
+    mountPath: /var/lib/postgresql/data
+```
+
+### Namespace
+
+**Neden Kullanılır?**
+- Resource izolasyonu
+- Environment separation (dev, staging, prod)
+- RBAC (Role-Based Access Control)
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ecommerce
+```
+
+**Namespace ile Çalışma:**
+
+```bash
+# Namespace belirtmeden (default namespace)
+kubectl get pods
+
+# Namespace belirterek
+kubectl get pods -n ecommerce
+
+# Tüm namespace'lerdeki pod'lar
+kubectl get pods --all-namespaces
+```
+
+### Health Probes
+
+**Liveness Probe:** Pod sağlıklı mı? (Sağlıksızsa restart et)
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: 5000
+  initialDelaySeconds: 30    # İlk 30 saniye bekleme
+  periodSeconds: 10          # Her 10 saniyede kontrol
+```
+
+**Readiness Probe:** Pod traffic alabilir mi? (Hazır değilse traffic gönderme)
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: 5000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+**Fark:**
+- Liveness fail → Pod restart
+- Readiness fail → Traffic gönderilmez ama pod restart olmaz
+
+### Resource Requests & Limits
+
+```yaml
+resources:
+  requests:                  # Minimum garantili kaynak
+    memory: "128Mi"
+    cpu: "100m"             # 100 millicore = 0.1 CPU
+  limits:                    # Maximum kullanabileceği
+    memory: "256Mi"
+    cpu: "200m"
+```
+
+**CPU Units:**
+- `1` = 1 full CPU core
+- `100m` = 0.1 CPU (millicore)
+- `500m` = 0.5 CPU
+
+**Memory Units:**
+- `128Mi` = 128 Mebibytes
+- `1Gi` = 1 Gibibyte
+
+**Ne Olur?**
+- Request'ten az kaynak olan node'a schedule edilmez
+- Limit'i aşarsa:
+  - CPU: Throttle edilir (yavaşlar)
+  - Memory: OOMKilled (Out of Memory)
+
+### kubectl Komutları
+
+```bash
+# Cluster bilgisi
+kubectl cluster-info
+kubectl get nodes
+
+# Resource oluşturma
+kubectl apply -f deployment.yaml
+kubectl apply -f .                    # Tüm yaml'ları
+
+# Resource listeleme
+kubectl get pods -n ecommerce
+kubectl get deployments -n ecommerce
+kubectl get services -n ecommerce
+kubectl get all -n ecommerce          # Tümü
+
+# Detaylı bilgi
+kubectl describe pod <pod-name> -n ecommerce
+kubectl describe deployment backend -n ecommerce
+
+# Loglar
+kubectl logs <pod-name> -n ecommerce
+kubectl logs -f <pod-name>            # Follow (tail -f gibi)
+kubectl logs <pod-name> --previous    # Önceki (crash olduysa)
+
+# Pod içine girme
+kubectl exec -it <pod-name> -n ecommerce -- /bin/sh
+
+# Port forwarding (local test için)
+kubectl port-forward svc/backend-service 5000:5000 -n ecommerce
+
+# Scaling
+kubectl scale deployment backend --replicas=3 -n ecommerce
+
+# Resource silme
+kubectl delete pod <pod-name> -n ecommerce
+kubectl delete deployment backend -n ecommerce
+kubectl delete namespace ecommerce    # Namespace ve içindeki her şey
+
+# Config değişikliği
+kubectl edit deployment backend -n ecommerce
+
+# Resource durumu izleme
+kubectl get pods -n ecommerce -w      # Watch mode
+```
+
+### Deployment Stratejileri
+
+**Rolling Update (Default):**
+- Yavaş yavaş pod'ları güncelle
+- Zero downtime
+- Rollback kolay
+
+```yaml
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1    # En fazla 1 pod down olabilir
+      maxSurge: 1          # En fazla 1 extra pod oluşturulabilir
+```
+
+**Recreate:**
+- Önce tüm pod'ları sil
+- Sonra yenilerini başlat
+- Downtime var ama temiz geçiş
+
+```yaml
+spec:
+  strategy:
+    type: Recreate
+```
+
+### Labels & Selectors
+
+**Labels:** Key-value metadata
+
+```yaml
+metadata:
+  labels:
+    app: backend
+    tier: api
+    environment: production
+```
+
+**Selectors:** Label'lara göre filtreleme
+
+```bash
+# Label'a göre listele
+kubectl get pods -l app=backend -n ecommerce
+kubectl get pods -l tier=api,environment=production -n ecommerce
+```
+
+**Service → Pod Matching:**
+
+```yaml
+# Service
+selector:
+  app: backend
+
+# Pod (Deployment template)
+labels:
+  app: backend
+```
+
+### Service Discovery
+
+**DNS Resolution:**
+
+```bash
+# Aynı namespace içinde
+curl http://backend-service:5000
+
+# Farklı namespace'ten
+curl http://backend-service.ecommerce.svc.cluster.local:5000
+```
+
+**Format:**
+```
+<service-name>.<namespace>.svc.cluster.local
+```
+
+### Kubernetes Monitoring (Prometheus)
+
+**Service Discovery:**
+
+```yaml
+scrape_configs:
+  - job_name: 'backend'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - ecommerce
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: backend
+```
+
+**Ne Yapıyor?**
+1. `kubernetes_sd_configs`: K8s API'den pod'ları otomatik keşfet
+2. `relabel_configs`: Sadece `app=backend` label'ı olan pod'ları tut
+3. Prometheus her yeni pod'u otomatik ekler/çıkarır
+
+### Troubleshooting
+
+**Problem:** Pod CrashLoopBackOff
+
+```bash
+# Logları kontrol et
+kubectl logs <pod-name> -n ecommerce
+
+# Previous container logları
+kubectl logs <pod-name> --previous -n ecommerce
+
+# Pod detaylarına bak (events)
+kubectl describe pod <pod-name> -n ecommerce
+```
+
+**Problem:** ImagePullBackOff
+
+```bash
+# Image registry'ye erişilebiliyor mu?
+kubectl describe pod <pod-name> -n ecommerce
+# Event'lerde error mesajını gör
+
+# Image adı doğru mu?
+# Image private ise secret gerekebilir
+```
+
+**Problem:** Service'e bağlanamıyorum
+
+```bash
+# Endpoint'leri kontrol et (pod IP'leri)
+kubectl get endpoints backend-service -n ecommerce
+
+# Boş ise:
+# - Selector doğru mu? (Service ve Pod label'ları eşleşiyor mu?)
+# - Pod'lar Running durumda mı?
+# - Readiness probe pass ediyor mu?
+
+# DNS test
+kubectl run test --rm -it --image=busybox -n ecommerce -- nslookup backend-service
+```
+
+**Problem:** Pod Pending durumunda
+
+```bash
+kubectl describe pod <pod-name> -n ecommerce
+# Event'lerde neden pending olduğunu gör
+
+# Olası nedenler:
+# - Node'larda yeterli kaynak yok (CPU/Memory)
+# - PVC bound olmamış
+# - ImagePullBackOff
+```
+
+### Real-World Deployment Flow
+
+```
+1. Developer: Code yaz → Docker image build → Registry'ye push
+         ↓
+2. Manifest Update: deployment.yaml'de image tag'i güncelle
+         ↓
+3. kubectl apply: Kubernetes'e gönder
+         ↓
+4. Rolling Update:
+   - Yeni pod başlat (Readiness probe bekle)
+   - Traffic'i yeni pod'a yönlendir
+   - Eski pod'u terminate et
+   - Diğer replica'lar için tekrarla
+         ↓
+5. Health Check: Liveness probe ile monitoring
+         ↓
+6. Prometheus: Metrics topla
+         ↓
+7. Grafana: Dashboard'da izle
+```
+
+### Key Takeaways
+
+✅ **Declarative:** İstenilen durumu tanımla (YAML), Kubernetes onu sağlar
+✅ **Self-Healing:** Pod crash olursa otomatik yeniden başlatır
+✅ **Scaling:** `kubectl scale` veya HorizontalPodAutoscaler
+✅ **Service Discovery:** DNS ile pod'lara erişim
+✅ **Zero Downtime:** Rolling updates ile deployment
+✅ **Resource Management:** Requests/limits ile kaynak garantisi
+✅ **ConfigMap/Secret:** Configuration management
+✅ **Persistent Storage:** PVC ile data persistence
+✅ **Health Probes:** Liveness (restart) + Readiness (traffic)
+✅ **Labels:** Resource organization ve selection
+
+### Docker Compose → Kubernetes Mapping
+
+| Docker Compose | Kubernetes |
+|----------------|------------|
+| `service` | Deployment + Service |
+| `image` | Pod spec: image |
+| `ports` | Service: ports |
+| `environment` | ConfigMap / Secret |
+| `volumes` | PersistentVolumeClaim |
+| `depends_on` | initContainers |
+| `networks` | Default (all pods in namespace) |
+| `restart: always` | Deployment (automatic) |

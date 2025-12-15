@@ -88,16 +88,26 @@
             }
         }
 
-        // Load products
+        // Load products (handle backend response shape)
         async function loadProducts() {
             try {
                 const response = await fetch(`${API_URL}/api/products`);
-                const products = await response.json();
-                
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                const json = await response.json();
+
+                // Backend returns { success, count, data } — normalize to an array
+                const products = Array.isArray(json) ? json : (json.data || []);
+
                 const container = document.getElementById('products-container');
+                if (!products.length) {
+                    container.innerHTML = '<p class="loading">No products available</p>';
+                    return;
+                }
+
                 container.innerHTML = '<div class="products"></div>';
                 const productsGrid = container.querySelector('.products');
-                
+
                 products.forEach(product => {
                     const card = document.createElement('div');
                     card.className = 'product-card';
@@ -109,7 +119,7 @@
                 });
             } catch (error) {
                 document.getElementById('products-container').innerHTML = 
-                    '<p class="error">Failed to load products</p>';
+                    `<p class="error">Failed to load products (${error.message})</p>`;
             }
         }
 
