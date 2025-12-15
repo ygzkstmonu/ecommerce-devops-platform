@@ -1,179 +1,130 @@
-# Monitoring & Observability
+# Monitoring Stack
 
-Bu dizin, Prometheus ve Grafana ile sistem izleme konfigürasyonlarını içerir.
+Prometheus + Grafana monitoring configuration for the e-commerce platform.
 
-## Servisler
+## Services
 
 ### Prometheus (Port: 9090)
-- **Amaç**: Metrikleri toplar ve saklar
-- **URL**: http://localhost:9090
-- **Konfigürasyon**: `prometheus.yml`
+**URL**: http://localhost:9090
+**Config**: `prometheus.yml`
 
-**Ne Yapar?**
-- Backend'den HTTP request metrikleri toplar
-- PostgreSQL'den database metrikleri toplar
-- Node Exporter'dan sistem metrikleri (CPU, RAM, Disk) toplar
-- Her 15 saniyede bir tüm kaynaklardan veri çeker
+Collects and stores metrics from:
+- Backend API (HTTP requests, response times)
+- PostgreSQL (via postgres-exporter)
+- System resources (via node-exporter)
+
+Scrape interval: 15 seconds
 
 ### Grafana (Port: 3001)
-- **Amaç**: Metrikleri görselleştirir
-- **URL**: http://localhost:3001
-- **Login**:
-  - Username: `admin`
-  - Password: `admin123`
+**URL**: http://localhost:3001
+**Credentials**: admin / admin123
 
-**Ne Yapar?**
-- Prometheus'tan veri çeker
-- Güzel dashboardlar oluşturur
-- Grafikler, tablolar, alertler gösterir
+Visualizes Prometheus metrics through dashboards. Auto-configured via provisioning files.
 
 ### Node Exporter (Port: 9100)
-- **Amaç**: Sistem metriklerini toplar
-- **URL**: http://localhost:9100/metrics
+**Endpoint**: http://localhost:9100/metrics
 
-**Topladığı Metrikler:**
-- CPU kullanımı
-- RAM kullanımı
-- Disk kullanımı
-- Network trafiği
+System metrics: CPU, RAM, Disk, Network
 
 ### Postgres Exporter (Port: 9187)
-- **Amaç**: PostgreSQL metriklerini toplar
-- **URL**: http://localhost:9187/metrics
+**Endpoint**: http://localhost:9187/metrics
 
-**Topladığı Metrikler:**
-- Aktif bağlantı sayısı
-- Query süreleri
-- Database boyutu
-- Transaction sayısı
+Database metrics: Active connections, query duration, database size, transactions
 
-## Backend Metrics Endpoint
+## Backend Metrics
 
-Backend'de `/metrics` endpoint'i var:
-- **URL**: http://localhost:5000/metrics
+**Endpoint**: http://localhost:5000/metrics
 
-**Topladığı Custom Metrikler:**
-- `http_requests_total`: Toplam HTTP request sayısı
-- `http_request_duration_seconds`: Request süreleri
-- `db_queries_total`: Toplam database query sayısı
-- `db_connections_active`: Aktif database bağlantıları
+Custom application metrics:
+- `http_requests_total` - Total HTTP requests
+- `http_request_duration_seconds` - Request latency
+- `db_queries_total` - Database query count
+- `db_connections_active` - Active DB connections
 
-**Default Node.js Metrikleri:**
-- `process_cpu_user_seconds_total`: CPU kullanımı
-- `nodejs_heap_size_total_bytes`: Heap memory
-- `nodejs_eventloop_lag_seconds`: Event loop lag
+Default Node.js metrics: CPU, heap memory, event loop lag
 
-## Kullanım
+## Quick Start
 
-### 1. Servisleri Başlat
 ```bash
+# Start all services
 docker compose up -d
+
+# Access Prometheus
+http://localhost:9090
+
+# Access Grafana
+http://localhost:3001
 ```
 
-### 2. Prometheus'a Bağlan
-http://localhost:9090 adresine git
+## Sample PromQL Queries
 
-**Örnek Queries:**
 ```promql
-# HTTP request rate (son 5 dakika)
+# HTTP request rate (last 5 min)
 rate(http_requests_total[5m])
 
-# CPU kullanımı
+# CPU usage (%)
 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
 
-# Memory kullanımı
+# Memory usage (%)
 (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100
 
-# Database bağlantıları
+# Database connections
 db_connections_active
 
-# Endpoint başına request sayısı
+# Requests per endpoint
 sum by (path) (http_requests_total)
+
+# Error rate (5xx errors)
+sum(rate(http_requests_total{status=~"5.."}[5m]))
 ```
 
-### 3. Grafana'ya Bağlan
-http://localhost:3001 adresine git
-- Username: `admin`
-- Password: `admin123`
-
-**İlk Kurulum:**
-1. Configuration → Data Sources → Add data source
-2. Prometheus seç
-3. URL: `http://prometheus:9090`
-4. Save & Test
-
-**Dashboard Import:**
-1. Dashboards → Import
-2. `grafana-dashboard.json` dosyasını yükle
-3. Prometheus data source seç
-4. Import
-
-## Monitoring Architecture
+## Architecture
 
 ```
-┌─────────────┐
-│   Backend   │───────┐
-│  (Node.js)  │       │
-│ Port: 5000  │       │
-└─────────────┘       │
-                      │ /metrics
-┌─────────────┐       │
-│  PostgreSQL │       │
-│ Port: 5432  │───┐   │
-└─────────────┘   │   │
-                  │   │
-┌─────────────┐   │   │
-│Postgres     │   │   │
-│Exporter     │───┤   │
-│Port: 9187   │   │   │
-└─────────────┘   │   │
-                  │   │
-┌─────────────┐   │   │        ┌──────────────┐
-│   Node      │   │   │        │  Prometheus  │
-│  Exporter   │───┼───┼───────▶│  Port: 9090  │
-│Port: 9100   │   │   │ scrape │              │
-└─────────────┘   │   │        └──────┬───────┘
-                  │   │               │
-                  └───┘               │ query
-                                      │
-                              ┌───────▼────────┐
-                              │    Grafana     │
-                              │  Port: 3001    │
-                              │  (Dashboard)   │
-                              └────────────────┘
+Backend (5000) ──┐
+                 │
+PostgreSQL ──────┤         Prometheus (9090)
+                 │ /metrics      │
+Node Exporter ───┤ ──────────────┤
+                 │               │
+Postgres Exp. ───┘               │ query
+                                 ↓
+                            Grafana (3001)
 ```
 
-## Real-World Scenario
+## Monitoring Methodologies
 
-**Durum**: Production'da API yavaşladı, kullanıcılar şikayet ediyor.
+**Golden Signals** (Google SRE):
+- Latency: `http_request_duration_seconds`
+- Traffic: `rate(http_requests_total[5m])`
+- Errors: `http_requests_total{status=~"5.."}`
+- Saturation: CPU, RAM, Disk usage
 
-**Monitoring Olmadan:**
-- "API yavaş" → Nerede? Hangi endpoint? Ne zaman başladı?
-- Tahmin yürütürsün → "Belki database?"
-- Random yerlerden debugging başlarsın
-- Saatler boşa gider
+**RED Method** (Services):
+- Rate: Request rate
+- Errors: Error rate
+- Duration: Response time
 
-**Monitoring İle:**
-1. Grafana'ya bak → `/api/products` endpoint'inin response time'ı arttı
-2. Prometheus'a bak → Database query sayısı normal, ama süresi uzun
-3. PostgreSQL metrikleri → Bağlantı sayısı 19/20 (limit dolmuş!)
-4. Çözüm → Connection pool size'ı artır veya query'leri optimize et
-5. 10 dakikada sorun çözüldü ✅
+**USE Method** (Resources):
+- Utilization: Resource usage percentage
+- Saturation: Queue length
+- Errors: Error count
 
-## DevOps Best Practices
+## Troubleshooting
 
-✅ **Golden Signals** (Google SRE):
-1. **Latency**: Request ne kadar sürdü? → `http_request_duration_seconds`
-2. **Traffic**: Kaç request geliyor? → `rate(http_requests_total[5m])`
-3. **Errors**: Kaç hata var? → `http_requests_total{status=~"5.."}`
-4. **Saturation**: Kaynaklar doldu mu? → CPU, RAM, Disk
+**Prometheus can't scrape targets:**
+```bash
+# Check Docker network
+docker network inspect ecommerce-devops-platform_app-network
 
-✅ **RED Method** (Microservices):
-- **Rate**: Request rate
-- **Errors**: Error rate
-- **Duration**: Request duration
+# Test DNS resolution
+docker exec ecommerce-prometheus nslookup backend
 
-✅ **USE Method** (Infrastructure):
-- **Utilization**: Kaynak kullanım yüzdesi
-- **Saturation**: Kuyruk uzunluğu
-- **Errors**: Hata sayısı
+# Test HTTP endpoint
+docker exec ecommerce-prometheus wget -O- http://backend:5000/metrics
+```
+
+**Grafana datasource connection fails:**
+- Use container name: `http://prometheus:9090` (not localhost)
+- Verify both containers are on the same network
+- Check provisioning files are mounted correctly
