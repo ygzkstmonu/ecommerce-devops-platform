@@ -1,0 +1,29 @@
+# Prometheus Configuration
+# Yagiz Kastamonu - 2025-12-15
+
+global:
+  scrape_interval: 15s      # Her 15 saniyede bir metrik topla
+  evaluation_interval: 15s  # Kuralları her 15 saniyede değerlendir
+
+# Scrape configurations (Hangi servislerden metrik toplanacak)
+scrape_configs:
+  # Prometheus kendi metriklerini toplar
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Backend API metrikleri
+  - job_name: 'backend'
+    static_configs:
+      - targets: ['backend:5000']
+    metrics_path: '/metrics'  # Backend'deki metrics endpoint
+
+  # PostgreSQL metrikleri (postgres-exporter ile)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Node Exporter (sistem metrikleri: CPU, RAM, Disk)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']

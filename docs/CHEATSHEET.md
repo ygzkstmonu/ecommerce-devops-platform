@@ -329,3 +329,616 @@ Secret: Güvenli değişken (şifreler, token'lar)
 ❌ Failure: Başarısız
 ⚪ Cancelled: İptal edildi
 ⏭️ Skipped: Atlandı (conditional)
+
+---
+
+## 🗄️ Database Testing & CI/CD Integration
+
+### PostgreSQL Service Container (GitHub Actions)
+
+CI/CD pipeline'da veritabanı testleri için PostgreSQL service container kullanımı:
+
+```yaml
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:                          # Service adı
+        image: postgres:15-alpine        # PostgreSQL image
+        env:
+          POSTGRES_USER: devops          # Kullanıcı adı
+          POSTGRES_PASSWORD: devops123   # Şifre
+          POSTGRES_DB: ecommerce         # Database adı
+        ports:
+          - 5432:5432                    # Port mapping
+        options: >-                      # Health check ayarları
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm install
+
+      # Database schema'yı oluştur
+      - name: Initialize database schema
+        env:
+          PGPASSWORD: devops123          # psql için şifre
+        run: |
+          psql -h localhost -U devops -d ecommerce -f backend/database/init.sql
+
+      # Database testlerini çalıştır
+      - name: Run database tests
+        working-directory: ./backend
+        env:
+          DB_HOST: localhost             # Service container'a bağlan
+          DB_PORT: 5432
+          DB_USER: devops
+          DB_PASSWORD: devops123
+          DB_NAME: ecommerce
+        run: npm test
+```
+
+**Service Container Nasıl Çalışır?**
+
+1. **Service Başlatma**: GitHub Actions, test job'ı başlatmadan önce PostgreSQL container'ı ayağa kaldırır
+2. **Health Check**: `pg_isready` komutu ile PostgreSQL'in hazır olduğunu bekler
+3. **Port Mapping**: Container'ın 5432 portu, runner'ın 5432 portuna map edilir
+4. **Test Execution**: Testler `localhost:5432` üzerinden PostgreSQL'e bağlanır
+5. **Cleanup**: Job bitince service container otomatik olarak silinir
+
+### Integration Test Örneği (db.test.js)
+
+```javascript
+const pool = require('../database/db');  // Connection pool
+
+async function testDatabaseConnection() {
+  try {
+    // ✅ TEST 1: Bağlantı Kontrolü
+    const result = await pool.query('SELECT NOW()');
+    console.log('✅ Database connection successful');
+    console.log('DB Time:', result.rows[0].now);
+
+    // ✅ TEST 2: Tablo Varlık Kontrolü
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'products'
+      );
+    `);
+
+    if (tableCheck.rows[0].exists) {
+      console.log('✅ Products table exists');
+    } else {
+      throw new Error('Products table not found');
+    }
+
+    // ✅ TEST 3: Data Validasyon
+    const countResult = await pool.query('SELECT COUNT(*) FROM products');
+    const count = parseInt(countResult.rows[0].count);
+
+    if (count >= 5) {
+      console.log(`✅ Sample data exists (${count} products)`);
+    } else {
+      throw new Error(`Expected at least 5 products, found ${count}`);
+    }
+
+    console.log('🎉 All database tests passed!');
+    process.exit(0);  // ✅ Başarılı exit code
+
+  } catch (error) {
+    console.error('❌ Database test failed:', error.message);
+    process.exit(1);  // ❌ Hata exit code
+  }
+}
+
+testDatabaseConnection();
+```
+
+### Async/Await ile Database İşlemleri
+
+**Connection Pool Nedir?**
+- Veritabanına her seferinde yeni bağlantı açmak yerine, hazır bağlantı havuzu kullanır
+- Performans artışı sağlar (bağlantı açma/kapama maliyeti yok)
+- Aynı anda birden fazla query çalıştırabilir
+
+```javascript
+// db.js - Connection Pool Konfigürasyonu
+const { Pool } = require('pg');
+
+const pool = new Pool({
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER || 'devops',
+  password: process.env.DB_PASSWORD || 'devops123',
+  database: process.env.DB_NAME || 'ecommerce',
+  max: 20,                    // Max 20 bağlantı
+  idleTimeoutMillis: 30000,   // 30 saniye boşta kalırsa kapat
+  connectionTimeoutMillis: 2000  // 2 saniye içinde bağlan
+});
+
+module.exports = pool;
+```
+
+**Async/Await Kullanımı:**
+
+```javascript
+// ❌ YANLIŞ - Callback Hell
+pool.query('SELECT * FROM products', (err, result) => {
+  if (err) {
+    console.error(err);
+  } else {
+    pool.query('SELECT * FROM users', (err2, result2) => {
+      // İç içe callback'ler...
+    });
+  }
+});
+
+// ✅ DOĞRU - Async/Await
+app.get('/api/products', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM products');
+    res.json({
+      success: true,
+      count: result.rows.length,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch products'
+    });
+  }
+});
+```
+
+### Exit Codes (Çıkış Kodları)
+
+**Neden Önemli?**
+- CI/CD pipeline'lar exit code'a bakarak success/failure kararı verir
+- `0` = Başarılı, `1` (veya 0 dışı) = Hata
+
+```javascript
+// Test başarılıysa
+process.exit(0);   // ✅ GitHub Actions bu adımı başarılı sayar
+
+// Test başarısızsa
+process.exit(1);   // ❌ GitHub Actions bu adımı başarısız sayar, pipeline durur
+```
+
+**CI Pipeline'da Kullanımı:**
+
+```yaml
+- name: Run database tests
+  run: npm test           # npm test, db.test.js'i çalıştırır
+  # Eğer db.test.js exit(1) dönerse:
+  # → Bu step ❌ FAIL olur
+  # → Sonraki step'ler çalışmaz (needs: test varsa)
+  # → PR merge edilemez (branch protection varsa)
+```
+
+### Database Test Senaryoları
+
+**1. Connection Test (Bağlantı Testi)**
+```javascript
+const result = await pool.query('SELECT NOW()');
+// PostgreSQL'e basit bir query gönder
+// Eğer cevap gelirse → Bağlantı ✅
+// Eğer hata fırlatırsa → Bağlantı ❌
+```
+
+**2. Table Existence (Tablo Varlık Kontrolü)**
+```javascript
+const tableCheck = await pool.query(`
+  SELECT EXISTS (
+    SELECT FROM information_schema.tables
+    WHERE table_name = 'products'
+  );
+`);
+// information_schema: PostgreSQL'in kendi metadata sistemi
+// Tablo varsa → exists: true
+// Tablo yoksa → exists: false
+```
+
+**3. Data Validation (Veri Doğrulama)**
+```javascript
+const countResult = await pool.query('SELECT COUNT(*) FROM products');
+const count = parseInt(countResult.rows[0].count);
+// COUNT(*): Tablodaki satır sayısı
+// En az 5 satır olmalı → init.sql'de 5 product ekledik
+```
+
+### Real-World Scenario (Gerçek Hayat Senaryosu)
+
+**Durum:** Developer yeni bir özellik geliştiriyor, yanlışlıkla `products` tablosunu `product` olarak yazmış.
+
+**CI Pipeline Olmadan:**
+1. Developer kodu push eder
+2. Kod production'a gider
+3. Uygulama crash eder → `products` tablosu bulunamıyor
+4. 🔥 Production'da sorun!
+
+**CI Pipeline İle:**
+1. Developer kodu push eder
+2. GitHub Actions tetiklenir
+3. Database testleri çalışır
+4. `products` tablosu bulunamıyor → ❌ Test FAIL
+5. PR merge edilemez
+6. Developer sorunu görür ve düzeltir
+7. ✅ Production güvende!
+
+### Integration Test Output Örneği
+
+**✅ Başarılı Test:**
+```
+✅ Database connection successful
+DB Time: 2025-12-15T10:30:45.123Z
+✅ Products table exists
+✅ Sample data exists (5 products)
+🎉 All database tests passed!
+Exit code: 0
+```
+
+**❌ Başarısız Test:**
+```
+✅ Database connection successful
+DB Time: 2025-12-15T10:30:45.123Z
+❌ Database test failed: Products table not found
+Exit code: 1
+```
+
+### PostgreSQL Komutları (psql)
+
+```bash
+# Database'e bağlan
+psql -h localhost -U devops -d ecommerce
+
+# SQL dosyası çalıştır (CI'da kullanılır)
+psql -h localhost -U devops -d ecommerce -f init.sql
+
+# Şifre environment variable'dan
+PGPASSWORD=devops123 psql -h localhost -U devops -d ecommerce
+
+# Tabloları listele
+\dt
+
+# Tablo yapısını gör
+\d products
+
+# Query çalıştır ve çık
+psql -h localhost -U devops -d ecommerce -c "SELECT COUNT(*) FROM products"
+```
+
+### Test-Driven CI/CD Pipeline Akışı
+
+```
+1. Developer: Code yaz + Push
+                ↓
+2. GitHub Actions: Workflow tetikle
+                ↓
+3. Service Container: PostgreSQL başlat
+                ↓
+4. Init Database: Schema oluştur (init.sql)
+                ↓
+5. Run Tests: db.test.js çalıştır
+                ↓
+          ✅ PASS?    ❌ FAIL?
+           ↓            ↓
+6. Backend Test    PR Merge Block
+           ↓            ↓
+7. Docker Build    Developer Fix
+           ↓            ↓
+8. Deploy Ready    Tekrar Test
+```
+
+### Key Takeaways (Önemli Noktalar)
+
+✅ **Service Containers:** CI/CD'de geçici veritabanı için kullan
+✅ **Integration Tests:** Gerçek database ile test et, mock kullanma
+✅ **Exit Codes:** 0 = success, 1 = failure → CI/CD buna göre karar verir
+✅ **Async/Await:** Database işlemleri her zaman async (callback hell'den kaç)
+✅ **Connection Pool:** Her query için yeni bağlantı açma, pool kullan
+✅ **Health Checks:** Service container hazır olana kadar bekle
+✅ **Environment Variables:** Credentials'ı kodda bırakma, env'den al
+✅ **Schema Initialization:** CI'da init.sql ile database'i hazırla
+
+---
+
+## 📊 Prometheus & Grafana Monitoring
+
+### Prometheus Konfigürasyonu Nasıl Çalışır?
+
+**Akış:**
+```
+1. Sen config yazıyorsun:
+   ./monitoring/prometheus.yml (Host)
+
+2. Docker mount ediyor:
+   ./monitoring/prometheus.yml → /etc/prometheus/prometheus.yml (Container)
+
+3. Prometheus başlarken okuyor:
+   --config.file=/etc/prometheus/prometheus.yml
+
+4. Target'ları buluyor:
+   Docker Network DNS ile (backend:5000 → container IP)
+
+5. Metrikleri topluyor:
+   HTTP GET http://backend:5000/metrics (her 15 saniyede)
+```
+
+### prometheus.yml Anatomisi
+
+```yaml
+global:
+  scrape_interval: 15s      # Her 15 saniyede bir metrik topla
+  evaluation_interval: 15s  # Alert kurallarını ne sıklıkla kontrol et
+
+scrape_configs:
+  - job_name: 'backend'           # Job adı (Prometheus UI'da görünür)
+    static_configs:
+      - targets: ['backend:5000'] # Docker DNS ile backend container'ı bul
+    metrics_path: '/metrics'      # Hangi endpoint'ten metrik çek
+```
+
+**DevOps Kararları:**
+- `scrape_interval`: Production'da 15-30s (daha sık = daha fazla CPU/network)
+- `targets`: Docker Compose'da container adı, Kubernetes'te service discovery
+- `metrics_path`: Default `/metrics` ama değiştirilebilir (örn: `/actuator/prometheus`)
+
+### Docker Network DNS
+
+**Container'lar birbirini nasıl buluyor?**
+
+```yaml
+# docker-compose.yml
+networks:
+  app-network:
+    driver: bridge
+
+services:
+  prometheus:
+    networks:
+      - app-network
+  backend:
+    networks:
+      - app-network
+```
+
+**Docker otomatik DNS oluşturur:**
+```
+Container Adı    →   IP Adresi
+─────────────────────────────
+backend          →   172.18.0.3
+prometheus       →   172.18.0.4
+grafana          →   172.18.0.5
+```
+
+**Prometheus container'ından:**
+```bash
+# DNS lookup
+nslookup backend
+# → 172.18.0.3
+
+# HTTP request
+wget http://backend:5000/metrics
+# → Prometheus formatında metrikler!
+```
+
+### Grafana Provisioning
+
+**Datasource Otomatik Yükleme:**
+```yaml
+# monitoring/grafana/provisioning/datasources/prometheus.yml
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy          # Grafana server üzerinden bağlan (güvenli)
+    url: http://prometheus:9090
+    isDefault: true        # Default datasource olsun
+    editable: false        # Production'da UI'dan değiştirilemez
+```
+
+**Dashboard Otomatik Yükleme:**
+```yaml
+# monitoring/grafana/provisioning/dashboards/dashboard.yml
+apiVersion: 1
+providers:
+  - name: 'Default'
+    folder: ''                      # Root folder
+    type: file                      # Dosyadan yükle
+    disableDeletion: false          # false: UI'dan silinebilir
+    updateIntervalSeconds: 10       # Her 10 saniyede dosyaları kontrol et
+    allowUiUpdates: true            # true: UI'dan değiştirilebilir ama kaybolur
+    options:
+      path: /etc/grafana/dashboards # Dashboard JSON'ları buradan yükle
+```
+
+**DevOps Kararları:**
+- **Development:** `disableDeletion: false`, `allowUiUpdates: true` (deneme yapsınlar)
+- **Production:** `disableDeletion: true`, `allowUiUpdates: false` (GitOps, kod ile güncellensin)
+
+### Volume Mounting
+
+**Prometheus:**
+```yaml
+volumes:
+  - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml  # Config
+  - prometheus_data:/prometheus                                 # Data (persistent)
+```
+
+**Grafana:**
+```yaml
+volumes:
+  - grafana_data:/var/lib/grafana                              # Database (persistent)
+  - ./monitoring/grafana/provisioning:/etc/grafana/provisioning # Provisioning
+  - ./monitoring/grafana/dashboards:/etc/grafana/dashboards    # Dashboards
+```
+
+**Ne demek?**
+- Sol taraf (Host): Senin bilgisayarın
+- Sağ taraf (Container): Container içi
+- Named volume (`prometheus_data`): Docker yönetir, container silinse bile kalır
+
+### Metrik Toplama Akışı
+
+```
+[15 saniye geçti]
+         ↓
+┌────────────────┐
+│   Prometheus   │
+└────────┬───────┘
+         │
+         ├─→ Job: backend
+         │   ├─ DNS: backend → 172.18.0.3
+         │   ├─ GET http://172.18.0.3:5000/metrics
+         │   └─ Metrikleri kaydet
+         │
+         ├─→ Job: postgres-exporter
+         │   ├─ DNS: postgres-exporter → 172.18.0.6
+         │   ├─ GET http://172.18.0.6:9187/metrics
+         │   └─ PostgreSQL metriklerini kaydet
+         │
+         └─→ Job: node-exporter
+             ├─ DNS: node-exporter → 172.18.0.5
+             ├─ GET http://172.18.0.5:9100/metrics
+             └─ Sistem metriklerini kaydet
+
+[Grafana'dan PromQL query]
+         ↓
+    Query Prometheus
+         ↓
+    Dashboard'da göster
+```
+
+### Environment Variables (Grafana)
+
+```yaml
+environment:
+  - GF_SECURITY_ADMIN_USER=admin
+  - GF_SECURITY_ADMIN_PASSWORD=admin123
+```
+
+**Naming Convention:**
+- `GF_` prefix → Grafana env variable
+- `SECURITY_ADMIN_USER` → Config path: `[security] admin_user`
+
+**Production Örneği:**
+```yaml
+environment:
+  - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}  # Secret'tan çek
+  - GF_SERVER_ROOT_URL=https://grafana.company.com
+  - GF_SMTP_ENABLED=true                            # Email alerts
+  - GF_AUTH_GOOGLE_ENABLED=true                     # Google OAuth
+```
+
+### PromQL Query Örnekleri
+
+```promql
+# HTTP request rate (son 5 dakika)
+rate(http_requests_total[5m])
+
+# CPU kullanımı (%)
+100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+
+# Memory kullanımı (%)
+(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100
+
+# Database bağlantıları
+db_connections_active
+
+# Endpoint başına request sayısı
+sum by (path) (http_requests_total)
+
+# 5xx error rate
+sum(rate(http_requests_total{status=~"5.."}[5m]))
+```
+
+### Monitoring Best Practices
+
+**Golden Signals (Google SRE):**
+1. **Latency**: İstek ne kadar sürdü? → `http_request_duration_seconds`
+2. **Traffic**: Kaç request geliyor? → `rate(http_requests_total[5m])`
+3. **Errors**: Kaç hata var? → `http_requests_total{status=~"5.."}`
+4. **Saturation**: Kaynaklar doldu mu? → CPU, RAM, Disk
+
+**RED Method (Microservices):**
+- **Rate**: Request rate
+- **Errors**: Error rate
+- **Duration**: Request duration
+
+**USE Method (Infrastructure):**
+- **Utilization**: Kaynak kullanım %
+- **Saturation**: Kuyruk uzunluğu
+- **Errors**: Hata sayısı
+
+### Config Reload
+
+**Prometheus config değiştirdin, reload nasıl yapılır?**
+
+```bash
+# 1. Container restart (her zaman çalışır)
+docker restart ecommerce-prometheus
+
+# 2. Config reload (downtime yok)
+docker exec ecommerce-prometheus kill -HUP 1
+
+# 3. API ile reload (--web.enable-lifecycle flag gerekli)
+curl -X POST http://localhost:9090/-/reload
+```
+
+### Troubleshooting
+
+**Problem:** Prometheus target'ı bulamıyor
+
+**Çözüm:**
+```bash
+# 1. Container network'ü kontrol et
+docker network inspect ecommerce-devops-platform_app-network
+
+# 2. DNS test et
+docker exec ecommerce-prometheus nslookup backend
+
+# 3. HTTP test et
+docker exec ecommerce-prometheus wget -O- http://backend:5000/metrics
+```
+
+**Problem:** Grafana datasource bağlanamıyor
+
+**Çözüm:**
+```bash
+# 1. Prometheus URL kontrol et (container adı kullan, localhost değil!)
+# ❌ YANLIŞ: http://localhost:9090
+# ✅ DOĞRU:  http://prometheus:9090
+
+# 2. Network kontrol et (aynı network'te olmalılar)
+docker compose ps
+```
+
+### Key Takeaways
+
+✅ **Config Management:** prometheus.yml ve grafana provisioning → Git'te tut (IaC)
+✅ **Docker DNS:** Container'lar birbirini isimle bulur (`backend:5000`)
+✅ **Volume Mounting:** Config dosyalarını host'tan container'a mount et
+✅ **Persistent Storage:** `named volumes` kullan (data kaybolmasın)
+✅ **Access Mode:** Grafana'da `proxy` kullan (güvenli, browser'dan direkt değil)
+✅ **Scrape Interval:** Production'da 15-30s (balance: freshness vs performance)
+✅ **Environment Variables:** Secrets'ı env'den çek, kodda bırakma
