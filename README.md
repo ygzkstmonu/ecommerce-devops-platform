@@ -1,11 +1,37 @@
 # E-Commerce DevOps Platform
 
-A production-ready e-commerce platform with complete DevOps implementation including Docker, CI/CD, monitoring, and Kubernetes orchestration.
+A production-ready e-commerce platform with complete DevOps implementation including Docker, CI/CD, monitoring, Kubernetes orchestration, and AWS cloud deployment.
 
 **Author**: Yagiz Kastamonu
 **Started**: 2025-12-10
-**Last Updated**: 2025-12-15
+**Last Updated**: 2025-12-17
 
+## Deployment Options
+
+### AWS Cloud (Terraform)
+```
+Infrastructure as Code with Terraform
+├── VPC (10.0.0.0/16)
+│   ├── Public Subnet (10.0.1.0/24)
+│   └── Internet Gateway
+├── Security Groups
+│   ├── SSH (22)
+│   ├── HTTP (3000, 5000, 9090, 3001)
+│   └── PostgreSQL (5432)
+└── EC2 Instance (t3.micro)
+    ├── Ubuntu 22.04 LTS
+    ├── Docker + Docker Compose
+    └── Elastic IP (static)
+```
+
+**Deploy to AWS:**
+```bash
+cd terraform
+terraform init
+terraform apply
+```
+
+See [terraform/README.md](terraform/README.md) for detailed instructions.
 
 ### Kubernetes (Production)
 ```
@@ -26,7 +52,12 @@ Namespace: ecommerce
 ```
 
 
-**Access URLs:**
+### Docker Compose (Local Development)
+```bash
+docker compose up -d
+```
+
+**Access URLs (Local):**
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:5000
 - PostgreSQL: localhost:5432
@@ -64,6 +95,15 @@ ecommerce-devops-platform/
 │   │   └── prometheus-config.yaml
 │   ├── deploy.sh              # Automated deployment
 │   └── README.md
+├── terraform/                  # AWS Infrastructure as Code
+│   ├── main.tf                # Provider configuration
+│   ├── variables.tf           # Input variables
+│   ├── vpc.tf                 # VPC, subnets, IGW
+│   ├── security-groups.tf     # Firewall rules
+│   ├── ec2.tf                 # EC2 instance
+│   ├── user-data.sh           # Bootstrap script
+│   ├── outputs.tf             # Deployment outputs
+│   └── README.md
 ├── docs/
 │   └── CHEATSHEET.md          # Complete DevOps reference
 ├── .github/
@@ -86,6 +126,7 @@ ecommerce-devops-platform/
 **Infrastructure:**
 - Docker & Docker Compose
 - Kubernetes
+- Terraform (AWS)
 - GitHub Actions
 
 **Monitoring:**

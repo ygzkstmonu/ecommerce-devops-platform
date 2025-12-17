@@ -72,7 +72,8 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:5000';
+        // Use current hostname (works both locally and on AWS)
+        const API_URL = `http://${window.location.hostname}:5000`;
 
         // Check backend health
         async function checkBackendHealth() {
